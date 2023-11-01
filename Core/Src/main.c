@@ -19,7 +19,10 @@
 #define buffer 6
 #define length 6
 
+#define single 0
+
 int16_t LinACC_X, LinACC_Y, LinACC_Z;
+int16_t Current_speed = 0;
 
 int8_t i2c_buff[buffer];
 uint32_t *address[buffer];
@@ -62,17 +65,38 @@ void USART1_SendString(char *str)
 
 }
 
-void print(uint32_t *data1[])
+void tester(void)
 {
+	sprintf(str1, "%lu", (uint32_t)test[0]);
+	sprintf(str3, "%d", 0);
+	strcat(str1,":");
+	strcat(str1,str3);
+	strcat(str1," , ");
+	for(int i=0;i<testlen-1;i++)
+	{
+		sprintf(str2, "%lu", (uint32_t)test[i+1]);
+		sprintf(str3, "%d", i+1);
+		strcat(str2,":");
+		strcat(str2,str3);
+		strcat(str1,str2);
+		strcat(str1," , ");
+	}
+	strcat(str1, "\n");
+	USART1_SendString(str1);
+}
+void calc(uint32_t *data1[], int16_t *LinACCp_X, int16_t *LinACCp_Y, int16_t *LinACCp_Z)
+{
+	*LinACCp_X = (((int16_t)*data1[1]) << 8) | ((int16_t)*data1[0]);
+	*LinACCp_X /= 100;
 
-	LinACC_X = (((int16_t)*data1[1]) << 8) | ((int16_t)*data1[0]);
-	LinACC_X /= 100;
+	*LinACCp_Y = (((int16_t)*data1[3]) << 8) | ((int16_t)*data1[2]);
+	*LinACCp_Y /= 100;
 
-	LinACC_Y = (((int16_t)*data1[3]) << 8) | ((int16_t)*data1[2]);
-	LinACC_Y /= 100;
-
-	LinACC_Z = (((int16_t)*data1[5]) << 8) | ((int16_t)*data1[4]);
-	LinACC_Z /= 100;
+	*LinACCp_Z = (((int16_t)*data1[5]) << 8) | ((int16_t)*data1[4]);
+	*LinACCp_Z /= 100;
+}
+void print()
+{
 
 	sprintf(str1, "%d", LinACC_X);
 	strcat(str1, " , ");
@@ -240,8 +264,8 @@ void TIM2_config (void)
 
 	TIM2->EGR |= TIM_EGR_UG;
 	TIM2->CR1 |= TIM_CR1_CEN;
-	TIM2->CCMR1 &= ~TIM_CCMR1_OC2M;
 	TIM2->CCMR1 |= TIM_CCMR1_OC2PE | TIM_CCMR1_OC2M_2 | TIM_CCMR1_OC2M_1;
+	TIM2->CCMR1 &= ~TIM_CCMR1_OC2M_0;
 	TIM2->CCER |= TIM_CCER_CC2E;
 
 }
@@ -255,23 +279,33 @@ void motor_init(void)
 	  GPIOA->CRL |= GPIO_CRL_MODE1_1 | GPIO_CRL_MODE1_0 | GPIO_CRL_CNF1_1;
 	  GPIOA->CRL &= ~GPIO_CRL_CNF1_0;
 
+	  GPIOA->CRL |= GPIO_CRL_MODE0_1 | GPIO_CRL_MODE0_0 ;
+	  GPIOA->CRL &= ~(GPIO_CRL_CNF0_0 | GPIO_CRL_CNF0_1);
 }
 
-void motor_code(void)
+void motor_code(int16_t* Current_speedP)
 {
+	 if((LinACC_X>2)||(LinACC_X<-2))
+	{
+		 *Current_speedP = (LinACC_X*500/5)+500;
+		 if(LinACC_X<0)
+		 {
+			 GPIOA->BSRR |= GPIO_BSRR_BS0; //For the direction pin A0
+		 }
+		 else  GPIOA->BSRR |= GPIO_BSRR_BR0;
 
-	 TIM2->CCR2 = (LinACC_X*500/39)+500;
-
+	}
+	TIM2->CCR2 = *Current_speedP; //for the pwm pin A1
 }
 
 int main(void) {
 
-
-	for (volatile int i = 0; i < 2000000; i++);
+	for (volatile int i = 0; i < 2000000; i++); //delay to allow the status register of imu to setup after power
+	
 	copy_address_set(address);
 	SystemClock_Config();
-	TIM2_config();
 	motor_init();
+	TIM2_config();
 	USART1_Init();
 	init_i2c2();
 	DMA_set();
@@ -282,8 +316,8 @@ int main(void) {
 
 		i2c_write(IMU_address,memAddress);
 		i2c_read(IMU_address);
-		print(address);
-		motor_code();
-		for (volatile int i = 0; i < 100000; i++); // Add a delay (you might want to use a proper delay function)
+		calc(address,&LinACC_X,&LinACC_Y,&LinACC_Z);
+		motor_code(&Current_speed);
+		//for (volatile int i = 0; i < 100000; i++); // Add a delay (you might want to use a proper delay function)
 	}
 }
